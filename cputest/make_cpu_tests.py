@@ -913,8 +913,8 @@ def pull_axy_tests():
 def pull_misc_tests():
     test('plb', mem_1f0=0xFE, es=0x1f0, edbr=0xFE, ep='N')
     test('plb', mem_1f0=0x00, es=0x1f0, edbr=0x00, p='CIDVNMX', ep='CZIDVMX')
-    # E=1: wrapping in page 1
-    test('plb', mem_100=0x3D, s=0x1ff, es=0x100, edbr=0x3D, p='MXE', ep='MXE')
+    # E=1: No wrapping in page 1
+    test('plb', mem_200=0x3D, s=0x1ff, es=0x100, edbr=0x3D, p='MXE', ep='MXE')
 
     test('pld', memw_1f0=0x9753, es=0x1f1, ed=0x9753, ep='N')
     test('pld', memw_1f0=0x0000, es=0x1f1, d=0x9999, ed=0x0000, p='CIDVNMX', ep='CZIDVMX')
