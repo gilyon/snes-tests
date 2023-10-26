@@ -397,7 +397,7 @@ def test_ins_with_modes(ins, modes, val, result=None, p='', ep=None, **kwargs):
                 do_test('($F0,x)', mem=0x7F1234, x=0x10, d=0x0100, memw_0100=0x1234, dbr=0x7F, add_flag='E')
                 # No page wrap with DL != 0.
                 # This fails on SNES despite matching the documentation - disabling test until further research
-                # do_test('($EE,x)', mem=0x7F1234, x=0x10, d=0x0101, mem_01FF=0x34, mem_0100=0x12, dbr=0x7F, add_flag='E')
+                # do_test('($EE,x)', mem=0x7F1234, x=0x10, d=0x0101, memw_01FF=0x1234, dbr=0x7F, add_flag='E')
         elif mode == A_IND_DIR_Y:
             assert operand_uses_m_size
             do_test('($34),y', mem=0x7F0FDC, y=0x1100, d=0xffff, memw_0033=0xFEDC, dbr=0x7E)
