@@ -30,6 +30,7 @@ result_p: .word 0
 result_s: .word 0
 result_d: .word 0
 result_dbr: .byte 0
+retaddr: .word 0  ; return address from bankN_save_results
 
 .segment "CODE"
 
@@ -42,6 +43,16 @@ main:
 	sep #$20  ; 8 bit A
 	ldx #$01EF
 	txs
+
+	jsr init
+
+	ldx #$ffff
+	stx test_num
+	jmp start_tests
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+init:
 	jsr init_regs
 	jsr init_video_mem
 	jsr init_mem
@@ -56,10 +67,7 @@ main:
 
 	lda #$0F ; screen on
 	sta $2100
-
-	ldx #$ffff
-	stx test_num
-	jmp start_tests
+	rts
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
@@ -93,7 +101,8 @@ init_regs:
 	lda #$30
 	sta $2131 ; no color math
 	stz $2133 ; no hires/interlace/overscan
-	stz $4200 ; no NMI/IRQ, no joypad autoread
+	lda #$01
+	sta $4200 ; no NMI/IRQ, joypad autoread enabled
 	rts
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
@@ -213,6 +222,14 @@ init_test:
 	beq @ok
 
 	; ** Invalid test order - possibly an errant jump **
+	clc
+	xce
+	sei
+	rep #$18  ; 16 bit X/Y
+	sep #$20  ; 8 bit A
+	ldx #$01EF
+	txs
+
 	jsr wait_for_vblank
 	jsr update_test_num
 	ldx #txt_fail
@@ -227,16 +244,19 @@ init_test:
 @ok:
 	inx
 	stx test_num
-	jsr update_test_num   ; This may not have effect while rendering, but we repeat it later anyway
+
+	; This wait is mostly unneeded and slows everything done. It's done in case a test crashes,
+	; to make sure the number was written to the screen first.
+	jsr wait_for_vblank
+	jsr update_test_num
 	rtl
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
+; Save the register values, and reset state (D, DBR, etc.)
 save_results:
-	php
-	clc
-	xce
-	php
+	; p register was already saved, and emulation mode was cleared.
+	sei
 	rep #$38
 	.a16
 	.i16
@@ -250,28 +270,12 @@ save_results:
 	sty result_y
 	plx  ; d register
 	stx result_d
-	pla  ; p register + e flag
-	xba
-	and #$01FF
-	sta result_p
-	tsx  ; x = original s value minus 3 (due to jsl)
-	bit #$0100  ; was E set?
-	beq @after_s_fix
-	; In E=1 mode, the pushes by jsl may have been done outside page 1 because it's a new instruction.
-	; S was then wrapped into page 1
-	cpx #$1FD
-	bcc @after_s_fix
-	; s >= 1FD which means it wrapped, which also means the return address may be outside page 1 - so fix S
-	txa
-	sbc #$100  ; C=1 so this subtracts $100
-	tax
-	txs  ; now we will return to the correct place
-@after_s_fix:
-	inx
-	inx
-	inx
-	stx result_s
-	ldx result_x
+	tsc  ; original S value minus 3 (due to jsl).
+	inc a
+	inc a
+	inc a
+	sta result_s
+
 	sep #$20
 	.a8
 	phb
@@ -304,6 +308,8 @@ update_test_num:
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
 fail:
+	ldx #$1ef
+	txs  ; in case s is invalid
 	jsr wait_for_vblank
 	jsr update_test_num
 
@@ -346,7 +352,52 @@ fail:
 	ldy #$125
 	jsr write_hex16
 
-@end: bra @end
+
+	jsr wait_for_key
+	jsr wait_for_vblank
+	jsr init
+
+	; jump to next test
+
+	rep #$20
+	.a16
+	lda test_num
+	inc a
+	asl a  ; A = (test_num+1) * 2
+	sec
+	adc test_num  ; A = (test_num+1) * 3
+	tax
+	sep #$20
+	.a8
+	ldy tests_table,x   ; y = test offset
+	lda tests_table+2,x ; a = test bank
+	pha
+	dey  ; the return address should be 1 less than the target
+	phy
+	rtl  ; actually a jump to the next test
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+
+wait_for_key:
+	ldx #txt_press
+	ldy #$341
+	jsr write_text
+@wait_press:
+	lda $4212
+	bit #$01
+	bne @wait_press  ; wait for joypad auto-read to finish
+	lda $4218  ; joypad 1 low byte
+	bpl @wait_press
+
+@wait_release:
+	lda $4212
+	bit #$01
+	bne @wait_release  ; wait for joypad auto-read to finish
+	lda $4218  ; joypad 1 low byte
+	bmi @wait_release
+
+	rts
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
@@ -361,6 +412,9 @@ wait_for_vblank:
 	rts
 
 
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+
 .include "tests.inc"
 
 
@@ -370,7 +424,7 @@ txt_success: .byte "Success", 0
 txt_fail: .byte "Failed", 0
 txt_skipped: .byte "Invalid test order", 0
 txt_testnum: .byte "Test number:", 0
-txt_press: .byte "Press A to resume...", 0
+txt_press: .byte "Press A for next tests...", 0
 txt_a: .byte "A = ", 0
 txt_x: .byte "X = ", 0
 txt_y: .byte "Y = ", 0
@@ -380,6 +434,10 @@ zero:
 	.byte 0, 0
 font:
 	.incbin "font.bin"
+
+tests_table:
+	.include "tests_table.inc"
+	.faraddr success
 
 .segment "TEST_DATA"  ; At address FFA0. Used by some tests
 test_addr:    ; $FFA0

@@ -8,7 +8,7 @@ asm_code = []
 tests_txt = []
 
 # Limit tests per bank to not exceed 32KB. Bank 0 has less room due to other code and data in it.
-TESTS_IN_BANK0 = 320
+TESTS_IN_BANK0 = 230
 TESTS_PER_BANK = 360
 
 
@@ -146,6 +146,7 @@ def test(ins, a=0x1234, x=0x3456, y=0x5678, p=None, ea=None, ex=None, ey=None, e
     # assumption: 16-bit indexes, 8-bit accum
     add_asm(f'''\
         test{test_num:04x}:
+        .export test{test_num:04x}: far
             ldx #${test_num:02x}
             jsl init_test''')
 
@@ -194,7 +195,7 @@ def test(ins, a=0x1234, x=0x3456, y=0x5678, p=None, ea=None, ex=None, ey=None, e
     if after_ins:
         add_asm(after_ins)
     add_asm(f'''\
-        jsl save_results ; now X=0, E=0, M=1
+        jsr bank{bank_num}_save_results ; now X=0, E=0, M=1
         .a8
         .i16
         cpx #${ex:04x}
@@ -247,11 +248,21 @@ def test(ins, a=0x1234, x=0x3456, y=0x5678, p=None, ea=None, ex=None, ey=None, e
 
     tests_txt.append(f'Test {test_num:04x}: {ins_name or ins}')
     inputs = f'A=${a:04x} X=${x:04x} Y=${y:04x} P=${p & 0xFF:02x} E={1 if p & FLAG_E else 0}'
+    if s is not None:
+        inputs += f' S=${s:04x}'
+    if dbr is not None:
+        inputs += f' DBR=${dbr:02x}'
+    if d is not None:
+        inputs += f' D=${d:04x}'
     if mem_input:
         inputs += ' ' + ' '.join(f'(${loc:06x})=${val:02x}' for loc, val in mem_input)
     outputs = f'A=${ea:04x} X=${ex:04x} Y=${ey:04x} P=${ep & 0xFF:02x} E={1 if ep & FLAG_E else 0}'
     if es is not None:
         outputs += f' S={es:04x}'
+    if edbr is not None:
+        outputs += f' DBR={edbr:02x}'
+    if ed is not None:
+        outputs += f' D={ed:04x}'
     if mem_output:
         outputs += ' ' + ' '.join(f'(${loc:06x})=${val:02x}' for loc, val in mem_output.items() if val is not None)
 
@@ -265,6 +276,13 @@ def test(ins, a=0x1234, x=0x3456, y=0x5678, p=None, ea=None, ex=None, ey=None, e
 
 
 def test_ins_with_modes(ins, modes, val, result=None, p='', ep=None, **kwargs):
+    ''' Test an instruction in all the specified modes.
+    val is the input value of memory/immediate for the operand. result (if given) is the expected output value.
+    Other parameters are passed to test().
+
+    Each instruction should be tested with all supported modes at least once for 16-bit and once for 8-bit.
+    Additional tests can be performed on less modes to save space.
+    '''
     def do_test(operand, add_flag='', mem=None, **kwargs2):
         full_ins = ins + ' ' + operand
         kwargs3 = kwargs.copy()
@@ -434,51 +452,56 @@ def test_ins_with_modes(ins, modes, val, result=None, p='', ep=None, **kwargs):
                 do_test('($12,s),y', mem=0x7FFEEC, y=0x1110, memw_0201=0xFEDC, dbr=0x7F, add_flag='E')
 
 
-def jml_to_ok_instructions(addr):
-    '''Return asm code that writes a jmp long (jml) instruction to the @ok label at the specified address'''
+def jml_to_label_instructions(addr, label):
+    '''Return asm code that writes a jmp long (jml) instruction to the specified label at the specified address'''
     return f'''\
         lda #$5C  ; jmp long opcode
         sta ${addr:04x}
-        lda #<@ok
+        lda #<{label}
         sta ${addr+1:04x}
-        lda #>@ok
+        lda #>{label}
         sta ${addr+2:04x}
-        lda #^@ok
+        lda #^{label}
         sta ${addr+3:04x}'''
+
+
+def jml_to_ok_instructions(addr):
+    '''Return asm code that writes a jmp long (jml) instruction to the @ok label at the specified address'''
+    return jml_to_label_instructions(addr, '@ok')
 
 
 def adc_binary_tests():
     test_ins_with_modes('adc', READ_MODES, a=0x1234, val=0xEDCB, ea=0, p='C', ep='CZ')
-    test_ins_with_modes('adc', READ_MODES, a=0x6789, val=0x2000, ea=0x8789, p='', ep='VN')
-    test_ins_with_modes('adc', READ_MODES, a=0x8000, val=0x8000, ea=0, p='ZIVN', ep='CZIV')
-    test_ins_with_modes('adc', READ_MODES, a=0x9000, val=0xE000, ea=0x7001, p='C', ep='CV')
+    test_ins_with_modes('adc', [A_IMM], a=0x6789, val=0x2000, ea=0x8789, p='', ep='VN')
+    test_ins_with_modes('adc', [A_IMM], a=0x8000, val=0x8000, ea=0, p='ZIVN', ep='CZIV')
+    test_ins_with_modes('adc', [A_IMM], a=0x9000, val=0xE000, ea=0x7001, p='C', ep='CV')
 
     test_ins_with_modes('adc', READ_MODES, a=0x1112, val=0xED, ea=0x1100, p='MC', ep='MCZ')
-    test_ins_with_modes('adc', READ_MODES, a=0x1167, val=0x20, ea=0x1187, p='M', ep='MVN')
-    test_ins_with_modes('adc', READ_MODES, a=0x1180, val=0x80, ea=0x1100, p='MZIVN', ep='MCZIV')
-    test_ins_with_modes('adc', READ_MODES, a=0x1190, val=0xE0, ea=0x1171, p='MC', ep='MCV')
+    test_ins_with_modes('adc', [A_IMM], a=0x1167, val=0x20, ea=0x1187, p='M', ep='MVN')
+    test_ins_with_modes('adc', [A_IMM], a=0x1180, val=0x80, ea=0x1100, p='MZIVN', ep='MCZIV')
+    test_ins_with_modes('adc', [A_IMM], a=0x1190, val=0xE0, ea=0x1171, p='MC', ep='MCV')
 
 
 def adc_decimal_tests():
     # The V flag is binary overflow for the sum of the most significant nibbles + carry from lower nibbles.
     test_ins_with_modes('adc', READ_MODES, a=0x1234, val=0x8765, ea=0, p='DC', ep='DCZ')
-    test_ins_with_modes('adc', READ_MODES, a=0x3550, val=0x4470, ea=0x8020, p='D', ep='DNV')
-    test_ins_with_modes('adc', READ_MODES, a=0x4000, val=0x3999, ea=0x7999, p='D', ep='D')
-    test_ins_with_modes('adc', READ_MODES, a=0xDCBA, val=0xDBCA, ea=0x1EEA, p='D', ep='DC')
+    test_ins_with_modes('adc', [A_IMM], a=0x3550, val=0x4470, ea=0x8020, p='D', ep='DNV')
+    test_ins_with_modes('adc', [A_IMM], a=0x4000, val=0x3999, ea=0x7999, p='D', ep='D')
+    test_ins_with_modes('adc', [A_IMM], a=0xDCBA, val=0xDBCA, ea=0x1EEA, p='D', ep='DC')
 
     test_ins_with_modes('adc', READ_MODES, a=0xCC12, val=0x87, ea=0xCC00, p='DMC', ep='DMCZ')
-    test_ins_with_modes('adc', READ_MODES, a=0xCC40, val=0x40, ea=0xCC80, p='DM', ep='DMNV')
-    test_ins_with_modes('adc', READ_MODES, a=0xCC40, val=0x39, ea=0xCC79, p='DM', ep='DM')
-    test_ins_with_modes('adc', READ_MODES, a=0xCCDC, val=0xDB, ea=0xCC1D, p='DM', ep='DMC')
+    test_ins_with_modes('adc', [A_IMM], a=0xCC40, val=0x40, ea=0xCC80, p='DM', ep='DMNV')
+    test_ins_with_modes('adc', [A_IMM], a=0xCC40, val=0x39, ea=0xCC79, p='DM', ep='DM')
+    test_ins_with_modes('adc', [A_IMM], a=0xCCDC, val=0xDB, ea=0xCC1D, p='DM', ep='DMC')
 
 
 def and_tests():
     test_ins_with_modes('and', READ_MODES, a=0xFEFF, val=0xEF5C, p='', ea=0xEE5C, ep='N')
-    test_ins_with_modes('and', READ_MODES, a=0x5555, val=0xAAAA, p='', ea=0x0000, ep='Z')
-    test_ins_with_modes('and', READ_MODES, a=0x1234, val=0x4300, p='CZIDVN', ea=0x0200, ep='CIDV')
+    test_ins_with_modes('and', [A_IMM], a=0x5555, val=0xAAAA, p='', ea=0x0000, ep='Z')
+    test_ins_with_modes('and', [A_IMM], a=0x1234, val=0x4300, p='CZIDVN', ea=0x0200, ep='CIDV')
 
     test_ins_with_modes('and', READ_MODES, a=0x12FE, val=0xDF, p='M', ea=0x12DE, ep='MN')
-    test_ins_with_modes('and', READ_MODES, a=0x5555, val=0xAA, p='M', ea=0x5500, ep='MZ')
+    test_ins_with_modes('and', [A_IMM], a=0x5555, val=0xAA, p='M', ea=0x5500, ep='MZ')
 
 
 def asl_tests():
@@ -508,8 +531,8 @@ def branch_tests():
     def test_branch_taken(ins, opcode, p):
         # branch forward: 7effc0 = B?? +127.  7e0041 = jml @ok.  7effc2 = STP
         before = jml_to_ok_instructions(0x7e0041)
-        after = '''
-            jsl save_results
+        after = f'''
+            jsr bank{bank_num}_save_results
             bra @to_fail
         @ok:'''
         test('jml $7EFFC0', ins_name=f'{ins} +127', before_regs=before, after_ins=after,
@@ -522,10 +545,10 @@ def branch_tests():
              mem_7f0040=opcode, mem_7f0041=0x80, mem_7f0042=OPCODE_STP, mem_7effc2=OPCODE_STP, p=p)
 
     def test_branch_not_taken(ins, p):
-        after = '''\
+        after = f'''\
             bra @ok
         @not_ok:
-            jsl save_results
+            jsr bank{bank_num}_save_results
             bra @to_fail
         @ok:
         '''
@@ -644,11 +667,11 @@ def dec_tests():
 
 def eor_tests():
     test_ins_with_modes('eor', READ_MODES, a=0xFEFF, val=0x6F8C, p='', ea=0x9173, ep='N')
-    test_ins_with_modes('eor', READ_MODES, a=0xAAAA, val=0xAAAA, p='', ea=0x0000, ep='Z')
-    test_ins_with_modes('eor', READ_MODES, a=0x1234, val=0x4334, p='CZIDVN', ea=0x5100, ep='CIDV')
+    test_ins_with_modes('eor', [A_IMM], a=0xAAAA, val=0xAAAA, p='', ea=0x0000, ep='Z')
+    test_ins_with_modes('eor', [A_IMM], a=0x1234, val=0x4334, p='CZIDVN', ea=0x5100, ep='CIDV')
 
     test_ins_with_modes('eor', READ_MODES, a=0x12FE, val=0x6F, p='M', ea=0x1291, ep='MN')
-    test_ins_with_modes('eor', READ_MODES, a=0xAAAA, val=0xAA, p='M', ea=0xAA00, ep='MZ')
+    test_ins_with_modes('eor', [A_IMM], a=0xAAAA, val=0xAA, p='M', ea=0xAA00, ep='MZ')
 
 
 def inc_tests():
@@ -670,8 +693,8 @@ def inc_tests():
 def jmp_tests():
     # All modes jump to $7e8000, which contains a jml to @ok.
     before = jml_to_ok_instructions(0x7e8000)
-    after = '''
-        jsl save_results
+    after = f'''
+        jsr bank{bank_num}_save_results
         bra @to_fail
     @ok:'''
 
@@ -807,11 +830,11 @@ def nop_wdm_tests():
 
 def ora_tests():
     test_ins_with_modes('ora', READ_MODES, a=0x2318, val=0xB939, p='', ea=0xBB39, ep='N')
-    test_ins_with_modes('ora', READ_MODES, a=0x0000, val=0x0000, p='', ea=0x0000, ep='Z')
-    test_ins_with_modes('ora', READ_MODES, a=0x1200, val=0x4300, p='CZIDVN', ea=0x5300, ep='CIDV')
+    test_ins_with_modes('ora', [A_IMM], a=0x0000, val=0x0000, p='', ea=0x0000, ep='Z')
+    test_ins_with_modes('ora', [A_IMM], a=0x1200, val=0x4300, p='CZIDVN', ea=0x5300, ep='CIDV')
 
     test_ins_with_modes('ora', READ_MODES, a=0x1298, val=0x39, p='M', ea=0x12B9, ep='MN')
-    test_ins_with_modes('ora', READ_MODES, a=0xAA00, val=0x00, p='M', ea=0xAA00, ep='MZ')
+    test_ins_with_modes('ora', [A_IMM], a=0xAA00, val=0x00, p='M', ea=0xAA00, ep='MZ')
 
 
 def pea_tests():
@@ -890,8 +913,8 @@ def pull_axy_tests():
 def pull_misc_tests():
     test('plb', mem_1f0=0xFE, es=0x1f0, edbr=0xFE, ep='N')
     test('plb', mem_1f0=0x00, es=0x1f0, edbr=0x00, p='CIDVNMX', ep='CZIDVMX')
-    # E=1: No wrapping in page 1
-    test('plb', mem_200=0x3D, s=0x1ff, es=0x100, edbr=0x3D, p='MXE', ep='MXE')
+    # E=1: wrapping in page 1
+    test('plb', mem_100=0x3D, s=0x1ff, es=0x100, edbr=0x3D, p='MXE', ep='MXE')
 
     test('pld', memw_1f0=0x9753, es=0x1f1, ed=0x9753, ep='N')
     test('pld', memw_1f0=0x0000, es=0x1f1, d=0x9999, ed=0x0000, p='CIDVNMX', ep='CZIDVMX')
@@ -949,8 +972,15 @@ def rts_rtl_rti_tests():
     test('rtl', memw_1f0=0xffff, mem_1f2=0x7e, es=0x1f2,
          before_regs=before, after_ins=after)
     # E=1: No stack page 1 wrapping
-    test('rtl', memw_200=0xffff, mem_202=0x7e, p='CZIDXMVNE', s=0x1ff, es=0x102,
-         before_regs=before, after_ins=after)
+    # In case of incorrect wrapping, add a "bad" target
+    after_rtl = f'''\
+        @not_ok:
+            jsr bank{bank_num}_save_results
+            bra @to_fail
+        @ok:'''
+    before_rtl = before + '\n' + jml_to_label_instructions(0x7f1000, '@not_ok')
+    test('rtl', memw_200=0xffff, mem_202=0x7e, memw_100=0x0fff, mem_102=0x7f, p='CZIDXMVNE', s=0x1ff, es=0x102,
+         before_regs=before_rtl, after_ins=after_rtl)
 
     # RTI. Return to 7e0000. The stored PC is 7e:0000.
     test('rti', mem_1f0=flags('DN'), memw_1f1=0x0000, mem_1f3=0x7e, es=0x1f3, p='CZ', ep='DN',
@@ -963,29 +993,29 @@ def rts_rtl_rti_tests():
 
 def sbc_binary_tests():
     test_ins_with_modes('sbc', READ_MODES, a=0x9090, val=0x908F, ea=0, p='', ep='CZ')
-    test_ins_with_modes('sbc', READ_MODES, a=0x9090, val=0x2000, ea=0x7090, p='C', ep='CV')
-    test_ins_with_modes('sbc', READ_MODES, a=0x1234, val=0x1235, ea=0xFFFF, p='CZIV', ep='IN')
-    test_ins_with_modes('sbc', READ_MODES, a=0x7000, val=0xA000, ea=0xCFFF, p='', ep='NV')
+    test_ins_with_modes('sbc', [A_IMM], a=0x9090, val=0x2000, ea=0x7090, p='C', ep='CV')
+    test_ins_with_modes('sbc', [A_IMM], a=0x1234, val=0x1235, ea=0xFFFF, p='CZIV', ep='IN')
+    test_ins_with_modes('sbc', [A_IMM], a=0x7000, val=0xA000, ea=0xCFFF, p='', ep='NV')
 
     test_ins_with_modes('sbc', READ_MODES, a=0xCC90, val=0x8F, ea=0xCC00, p='M', ep='MCZ')
-    test_ins_with_modes('sbc', READ_MODES, a=0xCC90, val=0x20, ea=0xCC70, p='MC', ep='MCV')
-    test_ins_with_modes('sbc', READ_MODES, a=0xCC12, val=0x13, ea=0xCCFF, p='MCZIV', ep='MIN')
-    test_ins_with_modes('sbc', READ_MODES, a=0xCC70, val=0xA0, ea=0xCCCF, p='M', ep='MNV')
+    test_ins_with_modes('sbc', [A_IMM], a=0xCC90, val=0x20, ea=0xCC70, p='MC', ep='MCV')
+    test_ins_with_modes('sbc', [A_IMM], a=0xCC12, val=0x13, ea=0xCCFF, p='MCZIV', ep='MIN')
+    test_ins_with_modes('sbc', [A_IMM], a=0xCC70, val=0xA0, ea=0xCCCF, p='M', ep='MNV')
 
 
 def sbc_decimal_tests():
     # The V flag is the same result as for binary subtraction
     test_ins_with_modes('sbc', READ_MODES, a=0x9090, val=0x9089, ea=0, p='D', ep='DCZ')
-    test_ins_with_modes('sbc', READ_MODES, a=0x0000, val=0x0001, ea=0x9999, p='DC', ep='DN')
-    test_ins_with_modes('sbc', READ_MODES, a=0x1000, val=0x9000, ea=0x2000, p='DC', ep='DV')
-    test_ins_with_modes('sbc', READ_MODES, a=0x1000, val=0x9001, ea=0x1999, p='DC', ep='D')
-    test_ins_with_modes('sbc', READ_MODES, a=0xAB1D, val=0xF1E2, ea=0x59DB, p='DC', ep='D')
+    test_ins_with_modes('sbc', [A_IMM], a=0x0000, val=0x0001, ea=0x9999, p='DC', ep='DN')
+    test_ins_with_modes('sbc', [A_IMM], a=0x1000, val=0x9000, ea=0x2000, p='DC', ep='DV')
+    test_ins_with_modes('sbc', [A_IMM], a=0x1000, val=0x9001, ea=0x1999, p='DC', ep='D')
+    test_ins_with_modes('sbc', [A_IMM], a=0xAB1D, val=0xF1E2, ea=0x59DB, p='DC', ep='D')
 
     test_ins_with_modes('sbc', READ_MODES, a=0xCC90, val=0x89, ea=0xCC00, p='DM', ep='DMCZ')
-    test_ins_with_modes('sbc', READ_MODES, a=0xCC00, val=0x01, ea=0xCC99, p='DMC', ep='DMN')
-    test_ins_with_modes('sbc', READ_MODES, a=0xCC10, val=0x90, ea=0xCC20, p='DMC', ep='DMV')
-    test_ins_with_modes('sbc', READ_MODES, a=0xCC10, val=0x91, ea=0xCC19, p='DMC', ep='DM')
-    test_ins_with_modes('sbc', READ_MODES, a=0xCCAB, val=0xF1, ea=0xCC5A, p='DMC', ep='DM')
+    test_ins_with_modes('sbc', [A_IMM], a=0xCC00, val=0x01, ea=0xCC99, p='DMC', ep='DMN')
+    test_ins_with_modes('sbc', [A_IMM], a=0xCC10, val=0x90, ea=0xCC20, p='DMC', ep='DMV')
+    test_ins_with_modes('sbc', [A_IMM], a=0xCC10, val=0x91, ea=0xCC19, p='DMC', ep='DM')
+    test_ins_with_modes('sbc', [A_IMM], a=0xCCAB, val=0xF1, ea=0xCC5A, p='DMC', ep='DM')
 
 
 def st_tests():
@@ -1173,6 +1203,35 @@ def add_all_tests():
     sbc_decimal_tests()
 
 
+def init_bank():
+    add_asm(f'''\
+        bank{bank_num}_save_results:
+            ; At this point we don't know the values of DBR or D, so should use only long addressing
+            php
+            sep #$20
+            .a8
+            sta f:result_a
+            pla
+            sta f:result_p
+            pla ; low byte of return addr
+            sta f:retaddr
+            pla ; high byte of return addr
+            sta f:retaddr+1
+            clc
+            xce  ; E mode = 0, so that stack doesn't wrap (which causes issues for some emulators with jsl)
+            php
+            pla
+            and #$01
+            sta f:result_p+1
+            lda f:result_a
+            jsl save_results
+            ldx retaddr
+            phx
+            ldx result_x
+            rts
+        ''')
+
+
 def next_bank():
     global bank_num, tests_in_bank
     bank_num += 1
@@ -1182,12 +1241,20 @@ def next_bank():
 
     .segment "BANK{bank_num}"
     ''')
+    init_bank()
+
+
+def write_table():
+    with open('tests_table.inc', 'w') as f:
+        for i in range(test_num):
+            f.write(f'.faraddr test{i:04x}\n')
 
 
 def main():
     tests_txt.append('Auto-generated by make_cpu_tests.py\n')
 
     asm_code.append('; Auto-generated by make_cpu_tests.py\n')
+    init_bank()
     add_asm('start_tests:\n')
 
     add_all_tests()
@@ -1198,6 +1265,8 @@ def main():
     add_asm('jml success')
     with open('tests.inc', 'w') as f:
         f.write('\n'.join(asm_code) + '\n')
+
+    write_table()
 
 
 main()
