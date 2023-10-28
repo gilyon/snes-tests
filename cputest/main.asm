@@ -15,6 +15,7 @@ native_brk_handler = $1000
 native_cop_handler = $1004
 emulation_brk_handler = $1008
 emulation_cop_handler = $100C
+vblank_every_n_tests = 10
 
 .segment "VECTORS"
 	.word 0, 0, native_cop_handler, native_brk_handler, 0, 0, 0, 0
@@ -31,6 +32,7 @@ result_s: .word 0
 result_d: .word 0
 result_dbr: .byte 0
 retaddr: .word 0  ; return address from bankN_save_results
+vblank_counter: .byte 0  ; wait for vblank when it reaches 0
 
 .segment "CODE"
 
@@ -148,14 +150,17 @@ init_video_mem:
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
-; Put STP opcodes in some places in case of errant jumps or software interrupts
 init_mem:
+	; Put STP opcodes in some places in case of errant jumps or software interrupts
 	lda #$DB
 	; BRK/COP handlers
 	sta $1000
 	sta $1004
 	sta $1008
 	sta $100C
+
+	lda #$01
+	sta vblank_counter
 	rts
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
@@ -245,9 +250,15 @@ init_test:
 	inx
 	stx test_num
 
-	; This wait is mostly unneeded and slows everything done. It's done in case a test crashes,
-	; to make sure the number was written to the screen first.
+	; Every N tests, wait for vblank. This is done to ensure that we're only updating the 
+	; screen during vblank so that the update takes effect.
+	dec vblank_counter
+	bne @after_vblank
 	jsr wait_for_vblank
+	lda #vblank_every_n_tests
+	sta vblank_counter
+@after_vblank:
+
 	jsr update_test_num
 	rtl
 
