@@ -57,11 +57,6 @@ _ins_index_size = set(('cpx cpy dex dey inx iny ldx ldy phx phy plx ply stx sty 
 # Instructions whose operand size depends on the M flag
 _ins_acc_size = set(('adc and asl bit cmp dec eor inc lda lsr ora pha pla rol ror sbc sta stz trb tsb txa tya'.split()))
 
-# Always 16 bit: pea pei per phd pld tcd tcs tdc tsc txs xba
-# Always 8 bit: phb phk php plb plp
-# No operand: bcc bcs beq bmi bne bpl bra brk brl bvc bvs clc cld cli clv cop nop rep rti rtl rts sec sed sei sep stp wai wdm xce
-# Special: jmp/jml jsl jsr mvn mvp
-
 _re_leading_space = re.compile(r'^[ \t]+.', re.MULTILINE)
 
 
@@ -706,22 +701,22 @@ def jmp_tests():
     # jmp long (a.k.a. jml)
     test('jml $7e8000', before_regs=before, after_ins=after, p='CZIDXMVNE')
 
-    # jmp (abs) - opcode=0x6C.  Target stored at test_target (00:FFA2)
-    test('jml $7e7000', ins_name='jmp ($FFA2)', mem_7e7000=0x6c, memw_7e7001=0xFFA2, mem_7e7003=OPCODE_STP,
+    # jmp (abs) - opcode=0x6C.  Reads from bank 0. Target stored at test_target (00:FFA2)
+    test('jml $7e7000', ins_name='jmp ($FFA2)', dbr=0x7F, mem_7e7000=0x6c, memw_7e7001=0xFFA2, mem_7e7003=OPCODE_STP,
          before_regs=before, after_ins=after)
 
-    # jmp [abs] - opcode=0xDC.  Target stored at test_target24 (00:FFA4)
-    test('jml [$FFA4]', before_regs=before, after_ins=after)
+    # jmp [abs] - opcode=0xDC.  Reads from bank 0. Target stored at test_target24 (00:FFA4)
+    test('jml [$FFA4]', dbr=0x7F, before_regs=before, after_ins=after)
 
-    # jmp (abs,x) - opcode=0x7C. jump from 7e7000, target stored at 7e5000. Wrap in bank.
+    # jmp (abs,x) - opcode=0x7C. Reads from PBR bank. jump from 7e7000, target stored at 7e5000. Wrap in bank.
     test('jml $7e7000', ins_name='jmp ($F000,x)', mem_7e7000=0x7c, memw_7e7001=0xf000, x=0x6000, mem_7e7003=OPCODE_STP,
-         memw_7e5000=0x8000, before_regs=before, after_ins=after)
+         memw_7e5000=0x8000, dbr=0x7F, before_regs=before, after_ins=after)
     # with 8 bit index. Target at 7e0080
     test('jml $7e7000', ins_name='jmp ($FFFF,x)', mem_7e7000=0x7c, memw_7e7001=0xffff, x=0x81, mem_7e7003=OPCODE_STP,
-         memw_7e0080=0x8000, before_regs=before, after_ins=after, p='X')
+         memw_7e0080=0x8000, dbr=0x7F, before_regs=before, after_ins=after, p='X')
     # with E=1
     test('jml $7e7000', ins_name='jmp ($FFFF,x)', mem_7e7000=0x7c, memw_7e7001=0xffff, x=0x81, mem_7e7003=OPCODE_STP,
-         memw_7e0080=0x8000, before_regs=before, after_ins=after, p='E', ep='MXE')
+         memw_7e0080=0x8000, dbr=0x7F, before_regs=before, after_ins=after, p='E', ep='MXE')
 
 
 def jsr_tests():
@@ -743,15 +738,15 @@ def jsr_tests():
     test('jml $7f7000', ins_name='jsl $FE8000', mem_7f7000=0x22, memw_7f7001=0x8000, mem_7f7003=0x7e, mem_7f7004=OPCODE_STP, s=0x100, p='CZIDXMVNE',
          ememw_00fe=0x7003, emem_0100=0x7f, es=0x1fd, before_regs=before, after_ins=after)
 
-    # jsr (abs,x) (opcode=0xFC).  target addr at $7E5000.
+    # jsr (abs,x) (opcode=0xFC).  Reads from PBR bank. Target addr at $7E5000.
     test('jml $7e7000', ins_name='jsr ($F000,x)', mem_7e7000=0xFC, memw_7e7001=0xF000, mem_7e7003=OPCODE_STP, x=0x6000, memw_7e5000=0x8000,
-         ememw_01ee=0x7002, es=0x1ed, before_regs=before, after_ins=after)
+         ememw_01ee=0x7002, es=0x1ed, dbr=0x7F, before_regs=before, after_ins=after)
     # 8-bt index. Target at 7e0080
     test('jml $7e7000', ins_name='jsr ($FFFF,x)', mem_7e7000=0xFC, memw_7e7001=0xFFFF, mem_7e7003=OPCODE_STP, x=0x81, memw_7e0080=0x8000, p='X',
-         ememw_01ee=0x7002, es=0x1ed, before_regs=before, after_ins=after)
+         ememw_01ee=0x7002, es=0x1ed, dbr=0x7F, before_regs=before, after_ins=after)
     # With E=1, the stack pushes can write outside page 1
     test('jml $7e7000', ins_name='jsr ($FFFF,x)', mem_7e7000=0xFC, memw_7e7001=0xFFFF, mem_7e7003=OPCODE_STP, x=0x81, memw_7e0080=0x8000, p='MXE',
-         s=0x100, ememw_00ff=0x7002, es=0x1fe, before_regs=before, after_ins=after)
+         s=0x100, ememw_00ff=0x7002, es=0x1fe, dbr=0x7F, before_regs=before, after_ins=after)
 
 
 def ld_tests():
@@ -1151,10 +1146,15 @@ def additional_tests():
 
     # Test PC wrapping
     OPCODE_NOP = 0xEA
-    before = jml_to_ok_instructions(0x7e0000)
-    after = '@ok:'
-    test('jml $7EFFFF', ins_name='nop', before_regs=before, after_ins=after,
-         mem_7effff=OPCODE_NOP, mem_7f0000=OPCODE_STP)
+    # In case of incorrect wrapping, add a "bad" target
+    after = f'''\
+        @not_ok:
+            jsr bank{bank_num}_save_results
+            bra @to_fail
+        @ok:'''
+    before = jml_to_ok_instructions(0x7e0000) + '\n' + jml_to_label_instructions(0x7f0000, '@not_ok')
+    test('jml $7EFFFF', ins_name='nop  ; test PC wrapping from $FFFF', before_regs=before, after_ins=after,
+         mem_7effff=OPCODE_NOP)
 
 
 # CZIDXMVN
