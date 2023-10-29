@@ -69,6 +69,9 @@ init:
 
 	lda #$0F ; screen on
 	sta $2100
+
+	jsr wait_for_vblank
+
 	rts
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;

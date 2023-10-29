@@ -59,6 +59,8 @@ _ins_acc_size = set(('adc and asl bit cmp dec eor inc lda lsr ora pha pla rol ro
 
 _re_leading_space = re.compile(r'^[ \t]+.', re.MULTILINE)
 
+UNDOCUMENTED_COMMENT = 'This tests undocumented behavior - see the cputest README file for details'
+
 
 def add_asm(code):
     code = dedent(code)
@@ -90,7 +92,7 @@ def next_bank_if_needed():
 def test(ins, a=0x1234, x=0x3456, y=0x5678, p=None, ea=None, ex=None, ey=None, ep=None,
          dbr=None, edbr=None, d=None, ed=None, s=None, es=None,
          before_regs=None, before_ins=None, after_ins=None, after_checks=None,
-         ins_name=None, **kwargs):
+         ins_name=None, comment=None, **kwargs):
     '''Test the given instruction, setting registers/memory before and checking them after.
 
     - ins is the instruction to execute
@@ -102,6 +104,7 @@ def test(ins, a=0x1234, x=0x3456, y=0x5678, p=None, ea=None, ex=None, ey=None, e
       at specific points.
     - ins_name will be written instead of the ins in tests.txt if provided. It doesn't
       affect the ROM.
+    - comment wil be written to texts.txt.
     '''
 
     global test_num, tests_in_bank
@@ -139,6 +142,8 @@ def test(ins, a=0x1234, x=0x3456, y=0x5678, p=None, ea=None, ex=None, ey=None, e
             assert False, 'Invalid keyword: ' + k
 
     # assumption: 16-bit indexes, 8-bit accum
+    if comment is not None:
+        asm_code.append(f'; {comment}')
     add_asm(f'''\
         test{test_num:04x}:
         .export test{test_num:04x}: far
@@ -265,6 +270,8 @@ def test(ins, a=0x1234, x=0x3456, y=0x5678, p=None, ea=None, ex=None, ey=None, e
     tests_txt.append(f'   Expected output: {outputs}')
     if before_regs or before_ins or after_ins or after_checks:
         tests_txt.append('   Additional initialization or checks are performed - see assembly')
+    if comment is not None:
+        tests_txt.append(f'   Note: {comment}')
 
     test_num += 1
     tests_in_bank += 1
@@ -390,9 +397,12 @@ def test_ins_with_modes(ins, modes, val, result=None, p='', ep=None, **kwargs):
                 # E=1, DL=0: Wraps in page
                 do_test('($EF,x)', mem=0x7F1234, x=0x10, d=0x0100, mem_01FF=0x34, mem_0100=0x12, dbr=0x7F, add_flag='E')
                 do_test('($F0,x)', mem=0x7F1234, x=0x10, d=0x0100, memw_0100=0x1234, dbr=0x7F, add_flag='E')
-                # No page wrap with DL != 0.
-                # This fails on SNES despite matching the documentation - disabling test until further research
-                # do_test('($EE,x)', mem=0x7F1234, x=0x10, d=0x0101, memw_01FF=0x1234, dbr=0x7F, add_flag='E')
+
+                # With E=1, DL != 0: There is no wrapping for the dp+D+X calculation, but the +1 addition for the high byte DOES wrap.
+                # This behavior is undocumented.
+                do_test('($F6,x)', mem=0x7F1234, x=0xEE, d=0x011A, memw_02FE=0x1234, dbr=0x7F, add_flag='E')
+                do_test('($F7,x)', mem=0x7F1234, x=0xEE, d=0x011A, mem_02FF=0x34, mem_0200=0x12, dbr=0x7F, add_flag='E',
+                        comment=UNDOCUMENTED_COMMENT)
         elif mode == A_IND_DIR_Y:
             assert operand_uses_m_size
             do_test('($34),y', mem=0x7F0FDC, y=0x1100, d=0xffff, memw_0033=0xFEDC, dbr=0x7E)
@@ -910,7 +920,8 @@ def pull_misc_tests():
     test('plb', mem_1f0=0xFE, es=0x1f0, edbr=0xFE, ep='N')
     test('plb', mem_1f0=0x00, es=0x1f0, edbr=0x00, p='CIDVNMX', ep='CZIDVMX')
     # E=1: No wrapping in page 1
-    test('plb', mem_200=0x3D, s=0x1ff, es=0x100, edbr=0x3D, p='MXE', ep='MXE')
+    test('plb', mem_200=0x3D, s=0x1ff, es=0x100, edbr=0x3D, p='MXE', ep='MXE',
+         comment=UNDOCUMENTED_COMMENT)
 
     test('pld', memw_1f0=0x9753, es=0x1f1, ed=0x9753, ep='N')
     test('pld', memw_1f0=0x0000, es=0x1f1, d=0x9999, ed=0x0000, p='CIDVNMX', ep='CZIDVMX')
