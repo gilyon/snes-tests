@@ -429,7 +429,11 @@ wait_for_vblank:
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
 
-.include "tests.inc"
+.ifdef basic
+	.include "tests-basic.inc"
+.else
+	.include "tests-full.inc"
+.endif
 
 
 .segment "RODATA"

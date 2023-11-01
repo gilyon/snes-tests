@@ -1,9 +1,11 @@
 from textwrap import dedent
 import re
+import sys
 
 test_num = 0
 bank_num = 0
 tests_in_bank = 0
+basic_tests_only = False
 asm_code = []
 tests_txt = []
 
@@ -92,7 +94,7 @@ def next_bank_if_needed():
 def test(ins, a=0x1234, x=0x3456, y=0x5678, p=None, ea=None, ex=None, ey=None, ep=None,
          dbr=None, edbr=None, d=None, ed=None, s=None, es=None,
          before_regs=None, before_ins=None, after_ins=None, after_checks=None,
-         ins_name=None, comment=None, **kwargs):
+         ins_name=None, comment=None, advanced=None, **kwargs):
     '''Test the given instruction, setting registers/memory before and checking them after.
 
     - ins is the instruction to execute
@@ -105,13 +107,22 @@ def test(ins, a=0x1234, x=0x3456, y=0x5678, p=None, ea=None, ex=None, ey=None, e
     - ins_name will be written instead of the ins in tests.txt if provided. It doesn't
       affect the ROM.
     - comment wil be written to texts.txt.
+    - advanced is true for an advanced test, i.e. for behavior not likely to be used in games.
+      The default (when advanced is None) is that tests with E=1 are considered advanced.
     '''
 
     global test_num, tests_in_bank
-    next_bank_if_needed()
 
     p = flags(p)
     ep = flags(ep, p)
+
+    if advanced is None:
+        advanced = bool(p & FLAG_E)
+    if advanced and basic_tests_only:
+        return
+
+    next_bank_if_needed()
+
     if ea is None:
         ea = a
     if ex is None:
@@ -369,7 +380,7 @@ def test_ins_with_modes(ins, modes, val, result=None, p='', ep=None, **kwargs):
             do_test('($34)', mem=0x7F1234, d=0xffff, memw_0033=0x1234, dbr=0x7F)
             # There doesn't seem to be a way to test bank 0 wrapping due to wram mirroring
             if bits == 16:  # test no bank wrapping at destination
-                do_test('($34)', mem=0x7EFFFF, d=0xffff, memw_0033=0xFFFF, dbr=0x7E)
+                do_test('($34)', mem=0x7EFFFF, d=0xffff, memw_0033=0xFFFF, dbr=0x7E, advanced=True)
             if bits == 8:
                 # E=1, DL=0: Wraps in page
                 do_test('($FF)', mem=0x7F1234, d=0x0100, mem_01FF=0x34, mem_0100=0x12, dbr=0x7F, add_flag='E')
@@ -379,7 +390,7 @@ def test_ins_with_modes(ins, modes, val, result=None, p='', ep=None, **kwargs):
             do_test('[$34]', mem=0x7F1234, d=0xffff, memw_0033=0x1234, mem_0035=0x7F)
             # There doesn't seem to be a way to test bank 0 wrapping due to wram mirroring
             if bits == 16:  # test no bank wrapping at destination
-                do_test('[$34]', mem=0x7EFFFF, d=0xffff, memw_0033=0xFFFF, mem_0035=0x7E)
+                do_test('[$34]', mem=0x7EFFFF, d=0xffff, memw_0033=0xFFFF, mem_0035=0x7E, advanced=True)
             if bits == 8:
                 # E=1: No wrapping in page, even with DL=0
                 do_test('[$FF]', mem=0x7F1234, d=0x0100, memw_01FF=0x1234, mem_0201=0x7F, add_flag='E')
@@ -388,7 +399,7 @@ def test_ins_with_modes(ins, modes, val, result=None, p='', ep=None, **kwargs):
             # $00FFA0 contains a pointer to $1212. Use it to test bank 0 wrapping
             do_test('($10,x)', mem=0x7F1212, d=0xffff, x=0xFF91, dbr=0x7F)
             if bits == 16:  # test no bank wrapping at destination
-                do_test('($10,x)', mem=0x7EFFFF, d=0xff00, x=0x123, memw_0033=0xFFFF, dbr=0x7E)
+                do_test('($10,x)', mem=0x7EFFFF, d=0xff00, x=0x123, memw_0033=0xFFFF, dbr=0x7E, advanced=True)
 
             # 8 bit index
             do_test('($90,x)', mem=0x7F1212, x=0x1210, d=0xff00, dbr=0x7F, add_flag='X')
@@ -410,7 +421,7 @@ def test_ins_with_modes(ins, modes, val, result=None, p='', ep=None, **kwargs):
             do_test('($34),y', mem=0x7FFEEC, y=0x1110, d=0xffff, memw_0033=0xFEDC, dbr=0x7F, add_flag='X')
             # There doesn't seem to be a way to test bank 0 wrapping due to wram mirroring
             if bits == 16:  # test no bank wrapping at destination
-                do_test('($34),y', mem=0x7EFFFF, d=0xffff, y=0x1111, memw_0033=0xEEEE, dbr=0x7E)
+                do_test('($34),y', mem=0x7EFFFF, d=0xffff, y=0x1111, memw_0033=0xEEEE, dbr=0x7E, advanced=True)
             if bits == 8:
                 # E=1, DL=0: Wraps in page
                 do_test('($FF),y', mem=0x7F1244, y=0x10, d=0x0100, mem_01FF=0x34, mem_0100=0x12, dbr=0x7F, add_flag='E')
@@ -424,7 +435,7 @@ def test_ins_with_modes(ins, modes, val, result=None, p='', ep=None, **kwargs):
             # 8 bit index
             do_test('[$34],y', mem=0x7FFEEC, y=0x1110, d=0xffff, memw_0033=0xFEDC, mem_0035=0x7F, add_flag='X')
             if bits == 16:  # test no bank wrapping at destination
-                do_test('[$34],y', mem=0x7EFFFF, d=0xffff, y=0x1111, memw_0033=0xEEEE, mem_0035=0x7E)
+                do_test('[$34],y', mem=0x7EFFFF, d=0xffff, y=0x1111, memw_0033=0xEEEE, mem_0035=0x7E, advanced=True)
             if bits == 8:
                 # E=1: No wrapping in page, even with DL=0
                 do_test('[$FF],y', mem=0x7F1244, y=0x10, d=0x0100, memw_01FF=0x1234, mem_0201=0x7F, add_flag='E')
@@ -452,7 +463,7 @@ def test_ins_with_modes(ins, modes, val, result=None, p='', ep=None, **kwargs):
             do_test('($10,s),y', mem=0x7FFEEC, y=0x1110, memw_01FF=0xFEDC, dbr=0x7F, add_flag='X')
             # There doesn't seem to be a way to test bank 0 wrapping due to wram mirroring
             if bits == 16:  # test no bank wrapping at destination
-                do_test('($10,s),y', mem=0x7EFFFF, y=0x1111, memw_01FF=0xEEEE, dbr=0x7E)
+                do_test('($10,s),y', mem=0x7EFFFF, y=0x1111, memw_01FF=0xEEEE, dbr=0x7E, advanced=True)
             if bits == 8:
                 # E=1: Can leave the stack page.
                 do_test('($12,s),y', mem=0x7FFEEC, y=0x1110, memw_0201=0xFEDC, dbr=0x7F, add_flag='E')
@@ -493,12 +504,12 @@ def adc_decimal_tests():
     test_ins_with_modes('adc', READ_MODES, a=0x1234, val=0x8765, ea=0, p='DC', ep='DCZ')
     test_ins_with_modes('adc', [A_IMM], a=0x3550, val=0x4470, ea=0x8020, p='D', ep='DNV')
     test_ins_with_modes('adc', [A_IMM], a=0x4000, val=0x3999, ea=0x7999, p='D', ep='D')
-    test_ins_with_modes('adc', [A_IMM], a=0xDCBA, val=0xDBCA, ea=0x1EEA, p='D', ep='DC')
+    test_ins_with_modes('adc', [A_IMM], a=0xDCBA, val=0xDBCA, ea=0x1EEA, p='D', ep='DC', advanced=True)
 
     test_ins_with_modes('adc', READ_MODES, a=0xCC12, val=0x87, ea=0xCC00, p='DMC', ep='DMCZ')
     test_ins_with_modes('adc', [A_IMM], a=0xCC40, val=0x40, ea=0xCC80, p='DM', ep='DMNV')
     test_ins_with_modes('adc', [A_IMM], a=0xCC40, val=0x39, ea=0xCC79, p='DM', ep='DM')
-    test_ins_with_modes('adc', [A_IMM], a=0xCCDC, val=0xDB, ea=0xCC1D, p='DM', ep='DMC')
+    test_ins_with_modes('adc', [A_IMM], a=0xCCDC, val=0xDB, ea=0xCC1D, p='DM', ep='DMC', advanced=True)
 
 
 def and_tests():
@@ -942,7 +953,7 @@ def rep_set_tests():
     test('sep #$0F', p=0x11, ep=0x1F)
     test('rep #$F0', p=0xFF, ep=0x0F)
     test('rep #$0F', p=0xFF, ep=0xF0)
-    test('rep #$38', p='MXDZE', ep='MXZE')  # Can't clear M,X when E=1
+    test('rep #$38', p='MXDZE', ep='MXZE', advanced=False)  # Can't clear M,X when E=1
 
 
 def rol_tests():
@@ -1016,13 +1027,13 @@ def sbc_decimal_tests():
     test_ins_with_modes('sbc', [A_IMM], a=0x0000, val=0x0001, ea=0x9999, p='DC', ep='DN')
     test_ins_with_modes('sbc', [A_IMM], a=0x1000, val=0x9000, ea=0x2000, p='DC', ep='DV')
     test_ins_with_modes('sbc', [A_IMM], a=0x1000, val=0x9001, ea=0x1999, p='DC', ep='D')
-    test_ins_with_modes('sbc', [A_IMM], a=0xAB1D, val=0xF1E2, ea=0x59DB, p='DC', ep='D')
+    test_ins_with_modes('sbc', [A_IMM], a=0xAB1D, val=0xF1E2, ea=0x59DB, p='DC', ep='D', advanced=True)
 
     test_ins_with_modes('sbc', READ_MODES, a=0xCC90, val=0x89, ea=0xCC00, p='DM', ep='DMCZ')
     test_ins_with_modes('sbc', [A_IMM], a=0xCC00, val=0x01, ea=0xCC99, p='DMC', ep='DMN')
     test_ins_with_modes('sbc', [A_IMM], a=0xCC10, val=0x90, ea=0xCC20, p='DMC', ep='DMV')
     test_ins_with_modes('sbc', [A_IMM], a=0xCC10, val=0x91, ea=0xCC19, p='DMC', ep='DM')
-    test_ins_with_modes('sbc', [A_IMM], a=0xCCAB, val=0xF1, ea=0xCC5A, p='DMC', ep='DM')
+    test_ins_with_modes('sbc', [A_IMM], a=0xCCAB, val=0xF1, ea=0xCC5A, p='DMC', ep='DM', advanced=True)
 
 
 def st_tests():
@@ -1148,7 +1159,7 @@ def xce_tests():
     test('xce', p='', ep='')
     test('xce', p='ZIDXMVN', ep='ZIDXMVN')
     test('xce', x=0x1234, ex=0x34, y=0x4567, ey=0x67, p='C', ep='MXE')
-    test('xce', p='MXE', ep='MXC')
+    test('xce', p='MXE', ep='MXC', advanced=False)
     test('xce', p='C', s=0x3ff, es=0x1ff, ep='MXE')
 
 
@@ -1262,7 +1273,25 @@ def write_table():
             f.write(f'.faraddr test{i:04x}\n')
 
 
+def handle_cmdline():
+    global basic_tests_only
+
+    for arg in sys.argv[1:]:
+        if arg in ('-h', '--help'):
+            print(f'Usage:  {sys.argv[0]} [--basic]')
+            print()
+            print('--basic:  Generate basic tests only')
+            sys.exit(2)
+        elif arg == '--basic':
+            basic_tests_only = True
+        else:
+            print('Unknown command line argument')
+            sys.exit(2)
+
+
 def main():
+    handle_cmdline()
+
     tests_txt.append('Auto-generated by make_cpu_tests.py\n')
 
     asm_code.append('; Auto-generated by make_cpu_tests.py\n')
@@ -1271,11 +1300,12 @@ def main():
 
     add_all_tests()
 
-    with open('tests.txt', 'w') as f:
+    suffix = '-basic' if basic_tests_only else '-full'
+    with open(f'tests{suffix}.txt', 'w') as f:
         f.write('\n'.join(tests_txt) + '\n')
 
     add_asm('jml success')
-    with open('tests.inc', 'w') as f:
+    with open(f'tests{suffix}.inc', 'w') as f:
         f.write('\n'.join(asm_code) + '\n')
 
     write_table()
