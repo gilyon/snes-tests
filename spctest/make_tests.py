@@ -907,6 +907,7 @@ def add_all_tests():
     mul_tests()
     nop_tests()
     not1_tests()
+    or_tests()
     or1_tests()
     pop_tests()
     push_tests()
